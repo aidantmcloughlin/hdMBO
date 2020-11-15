@@ -3,19 +3,23 @@
 RunMBO <- function(d.pars, bb.fn, hyper.pars,
                    results.mbo = NULL) {
   ### Purpose: Run Full Optimization Framework
-
+  OS = Sys.info()['sysname']
   ## Initialize parallelization, if needed
   if(hyper.pars$parallelize == TRUE) {
     cat("Spinning up parallelization cores...")
-    if(is.null(hyper.pars$nCores)){
-      cl <- snow::makeCluster(detectCores() - 1)
-      doSNOW::registerDoSNOW(cl)
-    } else{
-      cl <- snow::makeCluster(hyper.pars$nCores)
-      doSNOW::registerDoSNOW(cl)
+    if(is.null(hyper.pars$nCores))
+      hyper.pars$nCores = detectCores() - 1
+    
+    if(OS == 'Linux'){
+          options('mc.cores' = hyper.pars$nCores)
+          og_blas_thread = RhpcBLASctl::blas_get_num_procs()
+          RhpcBLASctl::blas_set_num_threads(1)
+       }else{
+        cl <- snow::makeCluster(hyper.pars$nCores)
+        doSNOW::registerDoSNOW(cl)
+      }
     }
-  }
-
+      
   ## Create Initial Designs
   if(is.null(results.mbo)) {
     cat("Generating Initial Designs...")
@@ -141,7 +145,8 @@ RunMBO <- function(d.pars, bb.fn, hyper.pars,
             DiceKriging::predict.km(
               results.mbo$gp.models$obj1,
               newdata = results.mbo$outcomes$designs[ind,..opt.cols],
-              type = "SK")$mean
+              type = "SK",
+              checkNames = F)$mean
           )
       }
     } else{# MULTI OBJECTIVE INFILL CRITERION OPTIMIZATION:
@@ -211,7 +216,9 @@ RunMBO <- function(d.pars, bb.fn, hyper.pars,
                        function(x)
                          DiceKriging::predict.km(
                            x, newdata = results.mbo$outcomes$designs[ind,..opt.cols],
-                           type = "SK")$mean)
+                           type = "SK",
+                           checkNames = F)$mean)
+        if(class(preds) != 'matrix') preds = matrix(preds, nrow = hyper.pars$pointsPerIter)
         colnames(preds)=NULL
 
 
@@ -320,11 +327,13 @@ RunMBO <- function(d.pars, bb.fn, hyper.pars,
   }
 
   ## end parallelization, if needed
-  if(hyper.pars$parallelize == TRUE) {
-    cat("Spinning down parallelization cores...")
-    snow::stopCluster(cl)
-  }
-
+  if(hyper.pars$parallelize == TRUE)
+    if(OS != 'Linux') {
+      cat("Spinning down parallelization cores...")
+      snow::stopCluster(cl)
+    }else{
+      RhpcBLASctl::blas_set_num_threads(og_blas_thread)    
+    }
   return(results.mbo)
 }
 
